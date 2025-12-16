@@ -19,6 +19,10 @@ logging.basicConfig(
 from api.server import app
 
 if __name__ == "__main__":
+    # 1. FORCE THE WORKING DIRECTORY (The Fix)
+    # This tells Windows: "No matter where you started me, look for files HERE."
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    
     # Ensure the root directory is in the python path
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
