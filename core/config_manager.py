@@ -16,10 +16,24 @@ class ConfigManager:
         self.load_config()
 
     def load_config(self):
+        default_keys = self._get_defaults().keys()
+        
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r') as f:
-                    self.config = json.load(f)
+                    loaded_data = json.load(f)
+                    
+                # --- SANITIZATION LOGIC ---
+                # Only keep keys that actually exist in our current defaults
+                # This fixes the "deprecated feature" crash risk
+                self.config = {k: v for k, v in loaded_data.items() if k in default_keys}
+                
+                # If the loaded config is missing new keys (added in updates), fill them with defaults
+                defaults = self._get_defaults()
+                for k, v in defaults.items():
+                    if k not in self.config:
+                        self.config[k] = v
+                        
             except Exception as e:
                 print(f"⚠️ Error loading config {self.config_file}: {e}")
                 self.config = self._get_defaults()
