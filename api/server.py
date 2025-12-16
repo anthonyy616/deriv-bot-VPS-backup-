@@ -9,10 +9,19 @@ from core.engine import TradingEngine
 from supabase import create_client, Client
 import asyncio
 import os
+import pathlib
 from dotenv import load_dotenv
 from cachetools import TTLCache 
 
-load_dotenv()
+# FIX #1: Get absolute path to .env
+PROJECT_ROOT = pathlib.Path(__file__).parent.parent.resolve()
+env_path = PROJECT_ROOT / '.env'
+
+print(f"📂 Looking for .env at: {env_path}")
+print(f"📂 .env exists: {env_path.exists()}")
+
+# FIX #2: Force load from absolute path
+load_dotenv(dotenv_path=str(env_path))
 
 app = FastAPI()
 
@@ -26,6 +35,18 @@ app.add_middleware(
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+print(f"🔑 SUPABASE_URL: {SUPABASE_URL}")
+print(f"🔑 SUPABASE_KEY: {'***LOADED***' if SUPABASE_KEY else 'MISSING!'}")
+
+# FIX #3: Graceful handling if env is missing
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ CRITICAL: .env file not found or missing keys!")
+    print(f"   Expected .env at: {env_path}")
+    # Create a dummy placeholder to prevent crash - login will fail but server runs
+    SUPABASE_URL = SUPABASE_URL or "https://placeholder.supabase.co"
+    SUPABASE_KEY = SUPABASE_KEY or "placeholder_key"
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Auth Cache (60 seconds) initially 60 but i chnaged it to 600
@@ -40,9 +61,7 @@ async def startup_event():
     print("🚀 Server Starting: Launching Monolith Engine...")
     asyncio.create_task(trading_engine.start())
 
-
     # 2. RESURRECTION PROTOCOL
-    # Wait 2 seconds for MT5 to connect, then restore bots
     await asyncio.sleep(2) 
     await bot_manager.restore_sessions()
 
@@ -78,7 +97,7 @@ async def get_current_bot(request: Request):
     except Exception:
         raise HTTPException(401, "Auth Failed")
 
-# --- 3. API Routes (Defined BEFORE Static Mount) ---
+# --- 3. API Routes ---
 
 @app.get("/env")
 async def get_env():
@@ -99,14 +118,8 @@ async def update_config(config: ConfigUpdate, bot = Depends(get_current_bot)):
 
 @app.post("/control/start")
 async def start_bot(request: Request):
-    # Use the helper to get user_id directly so we can save it
-    # We need the user_id string for the JSON file
     bot_instance = await get_current_bot(request)
-    
-    # Extract user_id from the bot instance (assuming config_manager has it)
     user_id = bot_instance.config_manager.user_id 
-    
-    # Use the NEW manager method that saves to disk
     await bot_manager.start_bot(user_id)
     return {"status": "started"}
 
@@ -114,8 +127,6 @@ async def start_bot(request: Request):
 async def stop_bot(request: Request):
     bot_instance = await get_current_bot(request)
     user_id = bot_instance.config_manager.user_id
-    
-    # Use the NEW manager method that cleans disk
     await bot_manager.stop_bot(user_id)
     return {"status": "stopped"}
 
@@ -124,11 +135,8 @@ async def get_status(bot = Depends(get_current_bot)):
     return bot.get_status()
 
 # --- 4. Static & Root Routes ---
-
-# Mount static folder for assets (css/js images)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Serve UI at Root
 @app.get("/")
 async def read_index():
     return FileResponse('static/index.html')

@@ -2,6 +2,7 @@ import asyncio
 import MetaTrader5 as mt5
 import os
 import sys
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,27 +34,21 @@ class TradingEngine:
         await self.run_tick_loop()
 
     async def run_tick_loop(self):
-        # We assume single-tenant or same-symbol for efficiency in this loop
         current_symbol = "FX Vol 20"
         
         while self.running:
             try:
-                # Dynamic Symbol from Strategy
                 bots = list(self.bot_manager.bots.values())
-                if tick:
-                # UPDATE HEARTBEAT ON SUCCESSFUL POLL
-                    self.last_tick_time = time.time()
                 if bots:
                     current_symbol = bots[0].config.get('symbol', current_symbol)
-                    
-                    # Ensure Symbol Selected
                     mt5.symbol_select(current_symbol, True)
                     
-                    # Direct API Call - Zero Network Latency
                     tick = mt5.symbol_info_tick(current_symbol)
                     
                     if tick:
-                        # Direct Position Check
+                        # UPDATE HEARTBEAT ON SUCCESSFUL POLL
+                        self.last_tick_time = time.time()
+                        
                         positions = mt5.positions_get(symbol=current_symbol)
                         pos_count = len(positions) if positions else 0
                         
@@ -63,17 +58,14 @@ class TradingEngine:
                             'positions_count': pos_count
                         }
                         
-                        # In-Memory Function Call
                         await asyncio.gather(*[bot.on_external_tick(tick_data) for bot in bots])
                         
             except Exception as e:
                 print(f"Engine Error: {e}")
-                # If error is critical (like MT5 disconnect), force crash:
                 if "connection lost" in str(e).lower():
                     print("💀 Critical MT5 Error. Committing Suicide to force Restart.")
-                    os._exit(1) # Force kill
+                    os._exit(1)
                 
-            # Zero Sleep for max performance
             await asyncio.sleep(0)
 
     async def watchdog(self):
@@ -84,8 +76,6 @@ class TradingEngine:
             
             if time_since_tick > 30:
                 print(f"💀 WATCHDOG: Engine frozen for {time_since_tick}s. Killing process.")
-                # Forcefully kill the entire Python process
-                # This ensures the external manager (NSSM) sees it as a crash and restarts it
                 os._exit(1)
 
     async def stop(self):
