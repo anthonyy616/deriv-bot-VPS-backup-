@@ -40,6 +40,12 @@ async def startup_event():
     print("🚀 Server Starting: Launching Monolith Engine...")
     asyncio.create_task(trading_engine.start())
 
+
+    # 2. RESURRECTION PROTOCOL
+    # Wait 2 seconds for MT5 to connect, then restore bots
+    await asyncio.sleep(2) 
+    await bot_manager.restore_sessions()
+
 class ConfigUpdate(BaseModel):
     symbol: str | None = None
     spread: float | None = None
@@ -92,13 +98,25 @@ async def update_config(config: ConfigUpdate, bot = Depends(get_current_bot)):
     return True
 
 @app.post("/control/start")
-async def start_bot(bot = Depends(get_current_bot)):
-    await bot.start()
+async def start_bot(request: Request):
+    # Use the helper to get user_id directly so we can save it
+    # We need the user_id string for the JSON file
+    bot_instance = await get_current_bot(request)
+    
+    # Extract user_id from the bot instance (assuming config_manager has it)
+    user_id = bot_instance.config_manager.user_id 
+    
+    # Use the NEW manager method that saves to disk
+    await bot_manager.start_bot(user_id)
     return {"status": "started"}
 
 @app.post("/control/stop")
-async def stop_bot(bot = Depends(get_current_bot)):
-    await bot.stop()
+async def stop_bot(request: Request):
+    bot_instance = await get_current_bot(request)
+    user_id = bot_instance.config_manager.user_id
+    
+    # Use the NEW manager method that cleans disk
+    await bot_manager.stop_bot(user_id)
     return {"status": "stopped"}
 
 @app.get("/status")
