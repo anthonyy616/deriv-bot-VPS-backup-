@@ -1,0 +1,46 @@
+import uuid
+from typing import Dict
+from core.config_manager import ConfigManager
+from core.strategy_engine import GridStrategy
+
+class BotManager:
+    def __init__(self):
+        # Maps user_id -> GridStrategy
+        self.bots: Dict[str, GridStrategy] = {}
+        self.state_file = "bot_state.json"
+
+    async def get_or_create_bot(self, user_id: str) -> GridStrategy:
+        """
+        Retrieves an existing bot for the user, or creates a new one 
+        if the server restarted or it doesn't exist.
+        """
+        # 1. Return existing instance if in memory
+        if user_id in self.bots:
+            return self.bots[user_id]
+        
+        # 2. Re-initialize bot for this user (restores config from DB/File)
+        print(f"🔄 Restoring/Creating bot session for User: {user_id}")
+        config_manager = ConfigManager(user_id=user_id)
+        
+        # Initialize Strategy
+        strategy = GridStrategy(config_manager)
+        
+        # Start Ticker (Passive)
+        await strategy.start_ticker()
+        
+        # Store in memory
+        self.bots[user_id] = strategy
+        return strategy
+
+    def get_bot(self, user_id: str) -> GridStrategy:
+        return self.bots.get(user_id)
+
+    async def stop_bot(self, user_id: str):
+        bot = self.bots.get(user_id)
+        if bot:
+            await bot.stop()
+            print(f"Bot stopped for user: {user_id}")
+
+    async def stop_all(self):
+        for user_id in list(self.bots.keys()):
+            await self.stop_bot(user_id)
