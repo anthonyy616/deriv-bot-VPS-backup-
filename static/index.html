@@ -430,8 +430,16 @@
             document.getElementById('dashboard').classList.remove('hidden');
             const btn = document.getElementById('login-btn');
             if (btn) btn.innerHTML = 'Sign In / Register';
-            log("✅ Authenticated.");
+            
+            log("✅ Authenticated. Checking Zombie State...");
+            
+            // 1. Load Configs
             loadConfig();
+            
+            // 2. IMMEDIATE Status Check (Fixes the "Start" button glitch)
+            fetchStatus(); 
+            
+            // 3. Start Loop
             startPolling();
         }
 
@@ -636,6 +644,7 @@
                 statusBadge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
                 toggleBtn.textContent = "Start Bot";
                 toggleBtn.className = "px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded";
+                document.getElementById('symbol').disabled = false;
                 if (lastRunningState) log("🛑 Bot Stopped.");
             }
             lastRunningState = status.running;
