@@ -9,9 +9,10 @@ class BotManager:
     def __init__(self):
         # Maps user_id -> GridStrategy
         self.bots: Dict[str, GridStrategy] = {}
-        self.state_file = "bot_state.json"
-        # On server startup, check if we need to auto-resume
-        # We can't use asyncio here easily, so we rely on the server.py startup event to trigger recovery
+        
+        # FIX: Use a unique filename for the session list.
+        # This prevents conflict with the strategy's "bot_state.json"
+        self.state_file = "active_users.json" 
 
     async def restore_sessions(self):
         """Called by server.py on startup to resurrect dead bots"""
@@ -22,7 +23,13 @@ class BotManager:
             with open(self.state_file, 'r') as f:
                 active_users = json.load(f)
             
-            print(f"🧟 CRASH RECOVERY: Found {len(active_users)} active sessions. Resurrecting...")
+            # Ensure we actually loaded a list (Safety Check)
+            if not isinstance(active_users, list):
+                print("⚠️ Warning: active_users.json was corrupted. Resetting.")
+                active_users = []
+
+            if active_users:
+                print(f"🧟 CRASH RECOVERY: Found {len(active_users)} active sessions. Resurrecting...")
             
             for user_id in active_users:
                 # 1. Re-initialize the bot
@@ -33,6 +40,9 @@ class BotManager:
                 
         except Exception as e:
             print(f"❌ Failed to restore sessions: {e}")
+            # If the file is broken, delete it so we can start fresh
+            if os.path.exists(self.state_file):
+                os.remove(self.state_file)
 
     async def get_or_create_bot(self, user_id: str) -> GridStrategy:
         if user_id in self.bots:
@@ -48,6 +58,9 @@ class BotManager:
         
         self.bots[user_id] = strategy
         return strategy
+
+    def get_bot(self, user_id: str) -> GridStrategy:
+        return self.bots.get(user_id)
 
     async def start_bot(self, user_id: str):
         """Wrapper to start bot and save state to disk"""
@@ -66,16 +79,25 @@ class BotManager:
     def _update_state_file(self, user_id: str, add: bool):
         """Writes the list of currently running users to disk"""
         current_users = []
+        
+        # Read existing list
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, 'r') as f:
-                    current_users = json.load(f)
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        current_users = data
             except: pass
         
+        # Modify list
         if add and user_id not in current_users:
             current_users.append(user_id)
         elif not add and user_id in current_users:
             current_users.remove(user_id)
             
-        with open(self.state_file, 'w') as f:
-            json.dump(current_users, f)
+        # Write back
+        try:
+            with open(self.state_file, 'w') as f:
+                json.dump(current_users, f)
+        except Exception as e:
+            print(f"Error saving active users: {e}")

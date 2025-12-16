@@ -8,6 +8,7 @@ import aiohttp
 class GridStrategy:
     def __init__(self, config_manager):
         self.config_manager = config_manager
+        # Initial Load
         self.symbol = config_manager.get_config().get('symbol', 'FX Vol 20')
         self.running = False
         self.session = None
@@ -32,7 +33,7 @@ class GridStrategy:
         
         # --- Race Condition Locks ---
         self.is_busy = False 
-        self.last_trade_time = 0 # Debounce timer
+        self.last_trade_time = 0 
         
         # --- UI Data ---
         self.current_price = 0.0
@@ -44,7 +45,7 @@ class GridStrategy:
 
     @property
     def config(self):
-        self.config_manager.load_config()
+        # FIX: Do NOT reload from disk every tick. Use memory.
         return self.config_manager.get_config()
 
     async def start_ticker(self):
@@ -63,7 +64,6 @@ class GridStrategy:
 
         mt5.symbol_select(self.symbol, True)
         
-        # --- STARTUP SYNC ---
         real_positions = self.get_real_positions_count()
         
         if real_positions == 0:
@@ -158,8 +158,7 @@ class GridStrategy:
             self.last_pos_count = self.open_positions
             return
 
-        # 2. RUNTIME SELF-HEALING (Fixes Race Conditions mid-run)
-        # If we see more positions than steps, we missed a save. Fast-forward immediately.
+        # 2. RUNTIME SELF-HEALING
         if self.open_positions > self.current_step and not self.is_resetting:
              print(f"🛡️ Auto-Repair: Catching up Step {self.current_step} -> {self.open_positions}")
              self.current_step = self.open_positions
@@ -189,7 +188,6 @@ class GridStrategy:
             return
 
         # 5. GLOBAL DEBOUNCE
-        # Hard ignore of all ticks for 2 seconds after a trade
         if time.time() - self.last_trade_time < 2.0:
             return
 
@@ -224,14 +222,8 @@ class GridStrategy:
         return (time.time() - self.start_time) / 60 > max_mins
 
     def init_immutable_grid(self, ask, bid):
-        # --- ORIGINAL FORMULA PRESERVED ---
         user_spread = float(self.config.get('spread', 6.0))
         broker_spread = ask - bid
-        
-        # If user spread is 10 and broker is 1, offset is 9.
-        # Top = Ask + 9. Bottom = Bid - 9.
-        # Distance between Top and Bottom = (Ask+9) - (Bid-9) = (Ask-Bid) + 18.
-        # This keeps the user's visual spread relative to the actual Bid/Ask lines.
         offset = max(user_spread - broker_spread, 0.1)
         
         self.anchor_center_ask = ask
@@ -240,13 +232,10 @@ class GridStrategy:
         self.anchor_top_ask = ask + offset
         self.anchor_bottom_bid = bid - offset
         
-        # Start State: Buy at Top, Sell at Bottom
         self.buy_trigger_name = "top"
         self.sell_trigger_name = "bottom"
         
         print(f"⚓ ANCHOR ({self.symbol}) Set. Offset: {offset:.3f}")
-        print(f"   Top (Ask): {self.anchor_top_ask:.5f}")
-        print(f"   Bottom (Bid): {self.anchor_bottom_bid:.5f}")
         self.save_state()
 
     def execute_market_order(self, direction, price):
@@ -255,19 +244,12 @@ class GridStrategy:
         
         try:
             # --- RACE CONDITION KILLER ---
-            # Before we even think about trading, check if this step exists in MT5.
-            # We are about to execute Step: self.current_step (e.g., Step 0 -> Trade S0)
-            # Actually, current_step starts at 0. Step 1 trade will be labeled S0? 
-            # Let's align: Trade 1 = "S0". Trade 2 = "S1".
             comment_tag = f"S{self.current_step}"
-            
             existing_pos = mt5.positions_get(symbol=self.symbol)
             if existing_pos:
                 for p in existing_pos:
-                    # Check Magic AND Comment to be 100% sure it's ours and this step
                     if p.magic == self.iteration and comment_tag in p.comment:
                         print(f"⚠️ RACE AVOIDED: Found existing {comment_tag}. Skipping trade & Syncing.")
-                        # It exists, so we just update our memory to match reality
                         self.current_step += 1
                         self.update_triggers_post_trade(direction)
                         self.save_state()
@@ -279,11 +261,10 @@ class GridStrategy:
             print(f"🚀 FIRING {direction.upper()} | Step {self.current_step + 1} | Lot: {vol}")
             
             if self.send_market_request_direct(direction, vol):
-                # SUCCESS: Move Step Forward
                 self.current_step += 1
                 self.update_triggers_post_trade(direction)
                 self.save_state()
-                self.last_trade_time = time.time() # START COOL DOWN
+                self.last_trade_time = time.time() 
             else:
                 print("❌ Order Failed. Retrying next tick.")
                 
@@ -293,28 +274,18 @@ class GridStrategy:
             self.is_busy = False
 
     def update_triggers_post_trade(self, direction):
-        # --- THE LOGIC PRESERVER ---
-        # "if buy hits first, move sell to centre"
-        # "if sell hits first move buy to centre"
-        # "if crossing buy again, buy at the same price"
-        
         if direction == "buy":
             if self.buy_trigger_name == "top":
-                # Hit Top -> Enable Center Sell
                 self.sell_trigger_name = "center"
                 self.buy_trigger_name = None 
             elif self.buy_trigger_name == "center":
-                # Hit Center -> Enable Bottom Sell
                 self.sell_trigger_name = "bottom"
                 self.buy_trigger_name = None
-                
         elif direction == "sell":
             if self.sell_trigger_name == "bottom":
-                # Hit Bottom -> Enable Center Buy
                 self.buy_trigger_name = "center"
                 self.sell_trigger_name = None
             elif self.sell_trigger_name == "center":
-                # Hit Center -> Enable Top Buy
                 self.buy_trigger_name = "top"
                 self.sell_trigger_name = None
 
@@ -329,7 +300,6 @@ class GridStrategy:
         price = tick.ask if direction == "buy" else tick.bid
         type_op = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
         
-        # --- CONSTANT SL/TP LOGIC ---
         if self.active_upper_level is not None and self.active_lower_level is not None:
             upper = self.active_upper_level
             lower = self.active_lower_level
@@ -368,7 +338,7 @@ class GridStrategy:
             "sl": sl,
             "tp": tp,
             "magic": self.iteration,
-            "comment": f"S{self.current_step}", # Used for IDEMPOTENCY check
+            "comment": f"S{self.current_step}",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
             "deviation": 50
@@ -382,7 +352,10 @@ class GridStrategy:
 
     def get_volume(self, step):
         step_lots = self.config.get('step_lots', [])
+        # Safe default if list is empty or fails to load
         if not step_lots: return 0.01
+        
+        # If we are at Step 5 but list only has 3 items, take the last one
         if step < len(step_lots): return step_lots[step]
         return step_lots[-1]
 

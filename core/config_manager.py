@@ -6,13 +6,13 @@ class ConfigManager:
     def __init__(self, user_id: str = "default", config_file: str = "config.json"):
         self.user_id = user_id
         
-        # If a specific user is logged in, use their unique config file
         if user_id and user_id != "default":
             self.config_file = f"config_{user_id}.json"
         else:
             self.config_file = config_file
             
         self.config: Dict[str, Any] = {}
+        # Load once on startup
         self.load_config()
 
     def load_config(self):
@@ -23,12 +23,9 @@ class ConfigManager:
                 with open(self.config_file, 'r') as f:
                     loaded_data = json.load(f)
                     
-                # --- SANITIZATION LOGIC ---
-                # Only keep keys that actually exist in our current defaults
-                # This fixes the "deprecated feature" crash risk
+                # Sanitize: Keep valid keys, fill missing defaults
                 self.config = {k: v for k, v in loaded_data.items() if k in default_keys}
                 
-                # If the loaded config is missing new keys (added in updates), fill them with defaults
                 defaults = self._get_defaults()
                 for k, v in defaults.items():
                     if k not in self.config:
@@ -36,7 +33,10 @@ class ConfigManager:
                         
             except Exception as e:
                 print(f"⚠️ Error loading config {self.config_file}: {e}")
-                self.config = self._get_defaults()
+                # Don't overwrite memory with defaults immediately if just a read error,
+                # but for safety on startup we must.
+                if not self.config: 
+                    self.config = self._get_defaults()
         else:
             print(f"ℹ️ Creating new config file: {self.config_file}")
             self.config = self._get_defaults()
@@ -50,11 +50,14 @@ class ConfigManager:
             print(f"❌ Error saving config: {e}")
 
     def update_config(self, new_config: Dict[str, Any]):
+        # Update Memory FIRST (Instant)
         self.config.update(new_config)
+        # Then save to disk (Persist)
         self.save_config()
         return self.config
 
     def get_config(self):
+        # Serve from Memory (Fast & Thread-Safe)
         return self.config
 
     def _get_defaults(self):
