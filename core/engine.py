@@ -20,17 +20,17 @@ class TradingEngine:
         self.path = os.getenv("MT5_PATH", "")
 
     async def start(self):
-        print("⚙️ Engine: Initializing Direct MT5 Connection (Monolith)...")
+        print(" Engine: Initializing Direct MT5 Connection (Monolith)...")
         
         if not mt5.initialize(path=self.path):
-            print(f"❌ MT5 Init Failed: {mt5.last_error()}")
+            print(f" MT5 Init Failed: {mt5.last_error()}")
             return
             
         if not mt5.login(self.login, password=self.password, server=self.server):
-            print(f"❌ MT5 Login Failed: {mt5.last_error()}")
+            print(f" MT5 Login Failed: {mt5.last_error()}")
             return
             
-        print("✅ MT5 Connected. Starting High-Speed Loop.")
+        print(" MT5 Connected. Starting High-Speed Loop.")
         await self.run_tick_loop()
 
     async def run_tick_loop(self):
@@ -63,7 +63,7 @@ class TradingEngine:
             except Exception as e:
                 print(f"Engine Error: {e}")
                 if "connection lost" in str(e).lower():
-                    print("💀 Critical MT5 Error. Committing Suicide to force Restart.")
+                    print(" Critical MT5 Error. Committing Suicide to force Restart.")
                     os._exit(1)
                 
             await asyncio.sleep(0)
@@ -75,10 +75,10 @@ class TradingEngine:
             time_since_tick = time.time() - self.last_tick_time
             
             if time_since_tick > 30:
-                print(f"💀 WATCHDOG: Engine frozen for {time_since_tick}s. Killing process.")
+                print(f" WATCHDOG: Engine frozen for {time_since_tick}s. Killing process.")
                 os._exit(1)
 
     async def stop(self):
         self.running = False
         mt5.shutdown()
-        print("🛑 MT5 Disconnected.")
+        print(" MT5 Disconnected.")

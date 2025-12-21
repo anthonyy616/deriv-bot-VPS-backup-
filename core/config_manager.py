@@ -32,13 +32,13 @@ class ConfigManager:
                         self.config[k] = v
                         
             except Exception as e:
-                print(f"⚠️ Error loading config {self.config_file}: {e}")
+                print(f" Error loading config {self.config_file}: {e}")
                 # Don't overwrite memory with defaults immediately if just a read error,
                 # but for safety on startup we must.
                 if not self.config: 
                     self.config = self._get_defaults()
         else:
-            print(f"ℹ️ Creating new config file: {self.config_file}")
+            print(f" Creating new config file: {self.config_file}")
             self.config = self._get_defaults()
             self.save_config()
 
@@ -47,7 +47,7 @@ class ConfigManager:
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=4)
         except Exception as e:
-            print(f"❌ Error saving config: {e}")
+            print(f" Error saving config: {e}")
 
     def update_config(self, new_config: Dict[str, Any]):
         # Update Memory FIRST (Instant)

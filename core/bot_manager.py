@@ -25,21 +25,21 @@ class BotManager:
             
             # Ensure we actually loaded a list (Safety Check)
             if not isinstance(active_users, list):
-                print("⚠️ Warning: active_users.json was corrupted. Resetting.")
+                print(" Warning: active_users.json was corrupted. Resetting.")
                 active_users = []
 
             if active_users:
-                print(f"🧟 CRASH RECOVERY: Found {len(active_users)} active sessions. Resurrecting...")
+                print(f" CRASH RECOVERY: Found {len(active_users)} active sessions. Resurrecting...")
             
             for user_id in active_users:
                 # 1. Re-initialize the bot
                 bot = await self.get_or_create_bot(user_id)
                 # 2. Force start it immediately
-                print(f"⚡ Auto-starting bot for {user_id}...")
+                print(f" Auto-starting bot for {user_id}...")
                 await bot.start()
                 
         except Exception as e:
-            print(f"❌ Failed to restore sessions: {e}")
+            print(f" Failed to restore sessions: {e}")
             # If the file is broken, delete it so we can start fresh
             if os.path.exists(self.state_file):
                 os.remove(self.state_file)
@@ -49,7 +49,7 @@ class BotManager:
             return self.bots[user_id]
         
         # Load Config & Strategy
-        print(f"🔄 Loading bot resources for User: {user_id}")
+        print(f" Loading bot resources for User: {user_id}")
         config_manager = ConfigManager(user_id=user_id)
         strategy = GridStrategy(config_manager)
         

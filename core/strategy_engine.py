@@ -30,6 +30,7 @@ class GridStrategy:
         self.iteration = 1
         self.is_resetting = False 
         self.reset_timestamp = 0
+        self.user_stopped = False  # Track user-initiated stops
         
         # --- Race Condition Locks ---
         self.is_busy = False 
@@ -49,18 +50,19 @@ class GridStrategy:
         return self.config_manager.get_config()
 
     async def start_ticker(self):
-        print("🔄 Config Change: Forcing Grid Reset...")
+        print(" Config Change: Forcing Grid Reset...")
         self.is_resetting = True
         self.reset_timestamp = time.time()
 
     async def start(self):
         self.running = True
+        self.user_stopped = False  # Reset on start
         self.session = aiohttp.ClientSession()
         self.start_time = time.time()
         
         self.symbol = self.config.get('symbol', 'FX Vol 20')
         if not mt5.symbol_select(self.symbol, True):
-             print(f"❌ Failed to select {self.symbol}")
+             print(f" Failed to select {self.symbol}")
 
         mt5.symbol_select(self.symbol, True)
         
@@ -70,19 +72,20 @@ class GridStrategy:
             self.cancel_all_orders_direct()
             self.reset_cycle()
         else:
-            print(f"⚠️ Resuming existing cycle ({real_positions} positions)...")
+            print(f" Resuming existing cycle ({real_positions} positions)...")
             self.last_pos_count = real_positions
             
             # CRITICAL FIX: Sync Step Count with Real Positions on Boot
             if real_positions > self.current_step:
-                print(f"🛡️ Startup Sync: Updating Step {self.current_step} -> {real_positions}")
+                print(f" Startup Sync: Updating Step {self.current_step} -> {real_positions}")
                 self.current_step = real_positions
                 self.save_state()
 
-        print(f"✅ Strategy Started: {self.symbol}")
+        print(f" Strategy Started: {self.symbol}")
 
     async def stop(self):
         self.running = False
+        self.user_stopped = True  # Mark as user-initiated
         self.save_state()
         if self.session:
             await self.session.close()
@@ -129,15 +132,28 @@ class GridStrategy:
         self.last_trade_time = 0
 
         self.save_state()
-        print(f"🔄 Cycle Reset: Waiting for new Anchor (Iteration {self.iteration})...")
+        print(f" Cycle Reset: Waiting for new Anchor (Iteration {self.iteration})...")
 
     async def on_external_tick(self, tick_data):
         if not self.running: return
+        
+        # If user stopped the bot, only allow cleanup - no new trades
+        if self.user_stopped:
+            # Allow reset to complete, but don't start new iterations
+            if self.is_resetting and self.open_positions == 0:
+                print(" User Stop: Cleanup complete. Bot fully stopped.")
+                return
+            elif self.is_resetting:
+                # Continue cleanup
+                pass
+            else:
+                # No active reset, just stopped - nothing to do
+                return
 
         # SYMBOL CHECK
         cfg_symbol = self.config.get('symbol')
         if cfg_symbol and cfg_symbol != self.symbol:
-            print(f"🔀 Switching Symbol: {self.symbol} -> {cfg_symbol}")
+            print(f" Switching Symbol: {self.symbol} -> {cfg_symbol}")
             self.close_all_direct()
             self.symbol = cfg_symbol
             mt5.symbol_select(self.symbol, True)
@@ -151,7 +167,7 @@ class GridStrategy:
         
         # 1. NUCLEAR RESET (Safety)
         if self.open_positions < self.last_pos_count and not self.is_resetting and self.current_step > 0:
-            print(f"🚨 POSITION DROP DETECTED. NUCLEAR RESET.")
+            print(f" POSITION DROP DETECTED. NUCLEAR RESET.")
             self.close_all_direct()
             self.is_resetting = True
             self.reset_timestamp = time.time()
@@ -160,7 +176,7 @@ class GridStrategy:
 
         # 2. RUNTIME SELF-HEALING
         if self.open_positions > self.current_step and not self.is_resetting:
-             print(f"🛡️ Auto-Repair: Catching up Step {self.current_step} -> {self.open_positions}")
+             print(f" Auto-Repair: Catching up Step {self.current_step} -> {self.open_positions}")
              self.current_step = self.open_positions
              self.save_state()
 
@@ -169,11 +185,14 @@ class GridStrategy:
         # 3. Reset Handler
         if self.is_resetting:
             if self.open_positions == 0:
+                if self.user_stopped:
+                    print(" User Stop: Account cleaned. Bot will NOT resume.")
+                    return
                 if self.is_time_up():
-                    print("🛑 Max Runtime Reached. Stopping.")
+                    print(" Max Runtime Reached. Stopping.")
                     await self.stop()
                     return
-                print("✅ Account Cleaned. Starting New Iteration.")
+                print(" Account Cleaned. Starting New Iteration.")
                 self.iteration += 1
                 self.reset_cycle()
             else:
@@ -200,20 +219,20 @@ class GridStrategy:
         # 7. LOGIC EXECUTION
         if self.buy_trigger_name == "top":
             if ask >= self.anchor_top_ask:
-                print(f"⚡ SNIPER: Hit Top (Ask {ask})")
+                print(f" SNIPER: Hit Top (Ask {ask})")
                 self.execute_market_order("buy", ask)
         elif self.buy_trigger_name == "center":
             if ask >= self.anchor_center_ask:
-                print(f"⚡ SNIPER: Hit Center (Ask {ask})")
+                print(f" SNIPER: Hit Center (Ask {ask})")
                 self.execute_market_order("buy", ask)
 
         if self.sell_trigger_name == "bottom":
             if bid <= self.anchor_bottom_bid:
-                print(f"⚡ SNIPER: Hit Bottom (Bid {bid})")
+                print(f" SNIPER: Hit Bottom (Bid {bid})")
                 self.execute_market_order("sell", bid)
         elif self.sell_trigger_name == "center":
             if bid <= self.anchor_center_bid:
-                print(f"⚡ SNIPER: Hit Center (Bid {bid})")
+                print(f" SNIPER: Hit Center (Bid {bid})")
                 self.execute_market_order("sell", bid)
 
     def is_time_up(self):
@@ -235,7 +254,7 @@ class GridStrategy:
         self.buy_trigger_name = "top"
         self.sell_trigger_name = "bottom"
         
-        print(f"⚓ ANCHOR ({self.symbol}) Set. Offset: {offset:.3f}")
+        print(f" ANCHOR ({self.symbol}) Set. Offset: {offset:.3f}")
         self.save_state()
 
     def execute_market_order(self, direction, price):
@@ -249,7 +268,7 @@ class GridStrategy:
             if existing_pos:
                 for p in existing_pos:
                     if p.magic == self.iteration and comment_tag in p.comment:
-                        print(f"⚠️ RACE AVOIDED: Found existing {comment_tag}. Skipping trade & Syncing.")
+                        print(f" RACE AVOIDED: Found existing {comment_tag}. Skipping trade & Syncing.")
                         self.current_step += 1
                         self.update_triggers_post_trade(direction)
                         self.save_state()
@@ -258,7 +277,7 @@ class GridStrategy:
 
             # --- FIRE TRADE ---
             vol = self.get_volume(self.current_step)
-            print(f"🚀 FIRING {direction.upper()} | Step {self.current_step + 1} | Lot: {vol}")
+            print(f" FIRING {direction.upper()} | Step {self.current_step + 1} | Lot: {vol}")
             
             if self.send_market_request_direct(direction, vol):
                 self.current_step += 1
@@ -266,10 +285,10 @@ class GridStrategy:
                 self.save_state()
                 self.last_trade_time = time.time() 
             else:
-                print("❌ Order Failed. Retrying next tick.")
+                print(" Order Failed. Retrying next tick.")
                 
         except Exception as e:
-            print(f"❌ EXECUTION ERROR: {e}")
+            print(f" EXECUTION ERROR: {e}")
         finally:
             self.is_busy = False
 
@@ -320,7 +339,7 @@ class GridStrategy:
             self.active_upper_level = upper
             self.active_lower_level = lower
             self.save_state()
-            print(f"🔒 LOCKED LEVELS: Upper={upper:.5f}, Lower={lower:.5f}")
+            print(f" LOCKED LEVELS: Upper={upper:.5f}, Lower={lower:.5f}")
 
         if direction == "buy":
             tp = upper
@@ -346,7 +365,7 @@ class GridStrategy:
         
         res = mt5.order_send(req)
         if res.retcode != mt5.TRADE_RETCODE_DONE and res.retcode != 10008:
-            print(f"❌ Order Fail: {res.comment} ({res.retcode})")
+            print(f" Order Fail: {res.comment} ({res.retcode})")
             return False
         return True
 
@@ -377,7 +396,7 @@ class GridStrategy:
             with open("bot_state.json", "w") as f:
                 json.dump(state, f)
         except Exception as e:
-            print(f"⚠️ Failed to save state: {e}")
+            print(f" Failed to save state: {e}")
 
     def load_state(self):
         if os.path.exists("bot_state.json"):

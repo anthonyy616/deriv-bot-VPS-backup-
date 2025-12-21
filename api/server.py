@@ -17,8 +17,8 @@ from cachetools import TTLCache
 PROJECT_ROOT = pathlib.Path(__file__).parent.parent.resolve()
 env_path = PROJECT_ROOT / '.env'
 
-print(f"📂 Looking for .env at: {env_path}")
-print(f"📂 .env exists: {env_path.exists()}")
+print(f" Looking for .env at: {env_path}")
+print(f" .env exists: {env_path.exists()}")
 
 # FIX #2: Force load from absolute path
 load_dotenv(dotenv_path=str(env_path))
@@ -36,12 +36,12 @@ app.add_middleware(
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-print(f"🔑 SUPABASE_URL: {SUPABASE_URL}")
-print(f"🔑 SUPABASE_KEY: {'***LOADED***' if SUPABASE_KEY else 'MISSING!'}")
+print(f" SUPABASE_URL: {SUPABASE_URL}")
+print(f" SUPABASE_KEY: {'***LOADED***' if SUPABASE_KEY else 'MISSING!'}")
 
 # FIX #3: Graceful handling if env is missing
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("❌ CRITICAL: .env file not found or missing keys!")
+    print(" CRITICAL: .env file not found or missing keys!")
     print(f"   Expected .env at: {env_path}")
     # Create a dummy placeholder to prevent crash - login will fail but server runs
     SUPABASE_URL = SUPABASE_URL or "https://placeholder.supabase.co"
@@ -50,7 +50,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Auth Cache (60 seconds) initially 60 but i chnaged it to 600
-auth_cache = TTLCache(maxsize=100, ttl=600)
+auth_cache = TTLCache(maxsize=100, ttl=30)
 
 # --- 1. Initialize Core Systems ---
 bot_manager = BotManager()
@@ -58,7 +58,7 @@ trading_engine = TradingEngine(bot_manager)
 
 @app.on_event("startup")
 async def startup_event():
-    print("🚀 Server Starting: Launching Monolith Engine...")
+    print(" Server Starting: Launching Monolith Engine...")
     asyncio.create_task(trading_engine.start())
 
     # 2. RESURRECTION PROTOCOL
@@ -79,20 +79,35 @@ class ConfigUpdate(BaseModel):
 
 # --- 2. Auth Helper ---
 def verify_token_sync(token):
-    if token in auth_cache: return auth_cache[token]
-    user = supabase.auth.get_user(token)
-    if user and user.user:
-        auth_cache[token] = user
-        return user
+    """
+    Verify Supabase token with short-term caching.
+    Cache by token for 30 seconds to reduce API calls while allowing multiple users.
+    """
+    if token in auth_cache: 
+        return auth_cache[token]
+    
+    try:
+        user = supabase.auth.get_user(token)
+        if user and user.user:
+            auth_cache[token] = user
+            return user
+    except Exception as e:
+        print(f"[AUTH] Token validation error: {e}")
+        # Remove from cache if validation failed
+        if token in auth_cache:
+            del auth_cache[token]
     return None
 
 async def get_current_bot(request: Request):
     auth_header = request.headers.get('Authorization')
-    if not auth_header: raise HTTPException(401, "Missing token")
+    if not auth_header: 
+        raise HTTPException(401, "Missing token")
     
     try:
-        user = await asyncio.to_thread(verify_token_sync, auth_header.split(" ")[1])
-        if not user: raise HTTPException(401, "Invalid Token")
+        token = auth_header.split(" ")[1]
+        user = await asyncio.to_thread(verify_token_sync, token)
+        if not user: 
+            raise HTTPException(401, "Invalid Token")
         return await bot_manager.get_or_create_bot(user.user.id)
     except Exception:
         raise HTTPException(401, "Auth Failed")
