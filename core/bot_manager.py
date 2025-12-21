@@ -28,15 +28,51 @@ class BotManager:
                 print(" Warning: active_users.json was corrupted. Resetting.")
                 active_users = []
 
-            if active_users:
-                print(f" CRASH RECOVERY: Found {len(active_users)} active sessions. Resurrecting...")
+            if not active_users:
+                return
+                
+            print(f" CRASH RECOVERY: Found {len(active_users)} active sessions. Checking...")
+            
+            users_to_restore = []
+            users_to_remove = []
             
             for user_id in active_users:
-                # 1. Re-initialize the bot
+                # Check if user had actually stopped before crash
+                state_file = f"bot_state_{user_id}.json" if user_id != "default" else "bot_state.json"
+                
+                if os.path.exists(state_file):
+                    try:
+                        with open(state_file, 'r') as f:
+                            state = json.load(f)
+                            user_stopped = state.get("user_stopped", False)
+                            
+                            if user_stopped:
+                                print(f" Skipping {user_id}: User had stopped bot (not a crash)")
+                                users_to_remove.append(user_id)
+                            else:
+                                print(f" Will restore {user_id}: Was running when crashed")
+                                users_to_restore.append(user_id)
+                    except:
+                        # Corrupted state file - assume crash, try to restore
+                        print(f" Will restore {user_id}: State file corrupted (possible crash)")
+                        users_to_restore.append(user_id)
+                else:
+                    # No state file - clean up active_users.json
+                    print(f" Removing {user_id}: No state file found")
+                    users_to_remove.append(user_id)
+            
+            # Clean up users who had stopped
+            for user_id in users_to_remove:
+                self._update_state_file(user_id, add=False)
+            
+            # Only restore users who were actually crashed
+            if users_to_restore:
+                print(f" Resurrecting {len(users_to_restore)} crashed bots...")
+            
+            for user_id in users_to_restore:
                 bot = await self.get_or_create_bot(user_id)
-                # 2. Force start it immediately
                 print(f" Auto-starting bot for {user_id}...")
-                await bot.start()
+                await bot.start(user_initiated=False)  # Crash recovery mode
                 
         except Exception as e:
             print(f" Failed to restore sessions: {e}")

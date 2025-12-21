@@ -62,9 +62,26 @@ class GridStrategy:
         self.is_resetting = True
         self.reset_timestamp = time.time()
 
-    async def start(self):
+    async def start(self, user_initiated=True):
+        """Start the strategy.
+        
+        Args:
+            user_initiated: True if user clicked Start button, False if crash recovery
+        """
         self.running = True
-        self.user_stopped = False  # Reset on start
+        
+        # Only reset user_stopped if user explicitly started the bot
+        # For crash recovery, respect the loaded state
+        if user_initiated:
+            self.user_stopped = False
+            print(" User-initiated start: Resetting stop flag")
+        else:
+            # Crash recovery - check if user had stopped before
+            if self.user_stopped:
+                print(" Crash Recovery: User had stopped bot - will not resume trading")
+            else:
+                print(" Crash Recovery: Resuming trading")
+        
         self.session = aiohttp.ClientSession()
         self.start_time = time.time()
         
@@ -399,7 +416,8 @@ class GridStrategy:
             "active_upper_level": self.active_upper_level,
             "active_lower_level": self.active_lower_level,
             "current_step": self.current_step,
-            "iteration": self.iteration
+            "iteration": self.iteration,
+            "user_stopped": self.user_stopped  # CRITICAL: Persist stop state
         }
         try:
             with open(self.state_file, "w") as f:
@@ -423,6 +441,7 @@ class GridStrategy:
                         self.active_lower_level = state.get("active_lower_level")
                         self.current_step = state.get("current_step", 0)
                         self.iteration = state.get("iteration", 1)
+                        self.user_stopped = state.get("user_stopped", False)  # CRITICAL: Restore stop state
             except: pass
 
     def get_status(self):
