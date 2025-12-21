@@ -418,7 +418,7 @@
     </div>
 
     <script>
-        let supabase = null;
+        let supabaseClient = null;
         let updateInterval = null;
         let sessionToken = null;
         let lastRunningState = false;
@@ -430,15 +430,15 @@
             document.getElementById('dashboard').classList.remove('hidden');
             const btn = document.getElementById('login-btn');
             if (btn) btn.innerHTML = 'Sign In / Register';
-            
+
             log("✅ Authenticated. Checking Zombie State...");
-            
+
             // 1. Load Configs
             loadConfig();
-            
+
             // 2. IMMEDIATE Status Check (Fixes the "Start" button glitch)
-            fetchStatus(); 
-            
+            fetchStatus();
+
             // 3. Start Loop
             startPolling();
         }
@@ -457,7 +457,7 @@
 
         async function apiCall(endpoint, method = 'GET', body = null) {
             // Check session validity before every call to prevent 401 loops
-            const { data } = await supabase.auth.getSession();
+            const { data } = await supabaseClient.auth.getSession();
             const token = data.session?.access_token;
 
             if (!token) {
@@ -482,7 +482,7 @@
 
                 if (res.status === 401) {
                     console.error("401 Unauthorized - Force Logout");
-                    supabase.auth.signOut();
+                    supabaseClient.auth.signOut();
                     setLoggedOutState();
                     return null;
                 }
@@ -507,7 +507,7 @@
                     return;
                 }
 
-                supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY, {
+                supabaseClient = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY, {
                     auth: {
                         persistSession: true,
                         autoRefreshToken: true,
@@ -516,11 +516,11 @@
                 });
 
                 // Auto-login check
-                const { data } = await supabase.auth.getSession();
+                const { data } = await supabaseClient.auth.getSession();
                 if (data.session) setLoggedInState(data.session);
 
                 // Auth Listener
-                supabase.auth.onAuthStateChange((event, session) => {
+                supabaseClient.auth.onAuthStateChange((event, session) => {
                     if (session) setLoggedInState(session);
                     else setLoggedOutState();
                 });
@@ -538,11 +538,11 @@
             btn.innerHTML = '<div class="loader"></div>';
 
             try {
-                const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
+                const { data: loginData, error: loginError } = await supabaseClient.auth.signInWithPassword({ email, password });
                 if (loginData.session) return; // Listener handles the rest
 
                 // Fallback to Registration
-                const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+                const { data: signUpData, error: signUpError } = await supabaseClient.auth.signUp({ email, password });
                 if (signUpData.session) return;
 
                 if (signUpError) throw signUpError;
@@ -660,7 +660,12 @@
             }
         }
 
-        function logout() { supabase.auth.signOut(); }
+        async function logout() {
+            await supabaseClient.auth.signOut();
+            sessionToken = null;
+            log("Signed out successfully.");
+            setLoggedOutState();
+        }
         function startPolling() { if (updateInterval) clearInterval(updateInterval); updateInterval = setInterval(fetchStatus, 1000); }
         function log(msg) {
             const logs = document.getElementById('logs');

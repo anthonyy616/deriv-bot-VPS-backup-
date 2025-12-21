@@ -8,6 +8,14 @@ import aiohttp
 class GridStrategy:
     def __init__(self, config_manager):
         self.config_manager = config_manager
+        self.user_id = config_manager.user_id  # Store user_id for state isolation
+        
+        # User-specific state file
+        if self.user_id and self.user_id != "default":
+            self.state_file = f"bot_state_{self.user_id}.json"
+        else:
+            self.state_file = "bot_state.json"
+        
         # Initial Load
         self.symbol = config_manager.get_config().get('symbol', 'FX Vol 20')
         self.running = False
@@ -380,6 +388,7 @@ class GridStrategy:
 
     def save_state(self):
         state = {
+            "user_id": self.user_id,
             "symbol": self.symbol,
             "anchor_center_ask": self.anchor_center_ask,
             "anchor_center_bid": self.anchor_center_bid,
@@ -393,15 +402,15 @@ class GridStrategy:
             "iteration": self.iteration
         }
         try:
-            with open("bot_state.json", "w") as f:
-                json.dump(state, f)
+            with open(self.state_file, "w") as f:
+                json.dump(state, f, indent=2)
         except Exception as e:
             print(f" Failed to save state: {e}")
 
     def load_state(self):
-        if os.path.exists("bot_state.json"):
+        if os.path.exists(self.state_file):
             try:
-                with open("bot_state.json", "r") as f:
+                with open(self.state_file, "r") as f:
                     state = json.load(f)
                     if state.get("symbol") == self.symbol:
                         self.anchor_center_ask = state.get("anchor_center_ask")
