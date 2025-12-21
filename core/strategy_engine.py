@@ -50,6 +50,9 @@ class GridStrategy:
         self.start_time = 0
         self.last_pos_count = 0
         
+        # Track position tickets for TP/SL detection
+        self.tracked_tickets = set()
+        
         self.load_state()
 
     @property
@@ -118,6 +121,41 @@ class GridStrategy:
     def get_real_positions_count(self):
         positions = mt5.positions_get(symbol=self.symbol)
         return len(positions) if positions else 0
+    
+    def get_position_tickets(self):
+        """Get set of current position ticket IDs"""
+        positions = mt5.positions_get(symbol=self.symbol)
+        if positions:
+            return set(pos.ticket for pos in positions)
+        return set()
+    
+    def check_tp_sl_hit(self):
+        """Check if any tracked position hit TP/SL by comparing current vs tracked tickets"""
+        if not self.tracked_tickets:
+            return False
+        
+        current_tickets = self.get_position_tickets()
+        
+        # If any tracked position disappeared, TP/SL was hit
+        closed_tickets = self.tracked_tickets - current_tickets
+        
+        if closed_tickets:
+            # Verify it was TP/SL by checking recent deals
+            from datetime import datetime, timedelta
+            history_deals = mt5.history_deals_get(
+                datetime.now() - timedelta(seconds=10),
+                datetime.now()
+            )
+            
+            if history_deals:
+                for deal in history_deals:
+                    # Check if this is one of our closed positions
+                    if deal.position_id in closed_tickets:
+                        # Deal type 0 = DEAL_TYPE_SELL, 1 = DEAL_TYPE_BUY
+                        # If it closed our position, it was TP or SL
+                        return True
+        
+        return False
 
     def cancel_all_orders_direct(self):
         orders = mt5.orders_get(symbol=self.symbol)
@@ -155,6 +193,7 @@ class GridStrategy:
         self.is_resetting = False
         self.is_busy = False 
         self.last_trade_time = 0
+        self.tracked_tickets = set()  # Clear tracked tickets on reset
 
         self.save_state()
         print(f" Cycle Reset: Waiting for new Anchor (Iteration {self.iteration})...")
@@ -190,14 +229,33 @@ class GridStrategy:
         self.current_price = ask 
         self.open_positions = tick_data.get('positions_count', 0)
         
-        # 1. NUCLEAR RESET (Safety)
-        if self.open_positions < self.last_pos_count and not self.is_resetting and self.current_step > 0:
-            print(f" POSITION DROP DETECTED. NUCLEAR RESET.")
-            self.close_all_direct()
-            self.is_resetting = True
-            self.reset_timestamp = time.time()
-            self.last_pos_count = self.open_positions
-            return
+        # Update tracked tickets
+        if self.current_step > 0 and not self.is_resetting:
+            current_tickets = self.get_position_tickets()
+            if current_tickets:
+                self.tracked_tickets = current_tickets
+        
+        # 1. NUCLEAR RESET - Triggered by TP/SL Detection
+        if not self.is_resetting and self.current_step > 0:
+            # Check if TP/SL was hit
+            if self.check_tp_sl_hit():
+                print(f" TP/SL HIT DETECTED. NUCLEAR RESET.")
+                self.close_all_direct()
+                self.is_resetting = True
+                self.reset_timestamp = time.time()
+                self.tracked_tickets = set()  # Clear tracked tickets
+                self.last_pos_count = self.open_positions
+                return
+            
+            # Fallback: Position count drop detection (safety net)
+            if self.open_positions < self.last_pos_count:
+                print(f" POSITION DROP DETECTED. NUCLEAR RESET.")
+                self.close_all_direct()
+                self.is_resetting = True
+                self.reset_timestamp = time.time()
+                self.tracked_tickets = set()  # Clear tracked tickets
+                self.last_pos_count = self.open_positions
+                return
 
         # 2. RUNTIME SELF-HEALING
         if self.open_positions > self.current_step and not self.is_resetting:
